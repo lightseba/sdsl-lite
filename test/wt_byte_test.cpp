@@ -538,6 +538,137 @@ TYPED_TEST(wt_byte_test, lex_count)
     test_lex_count<TypeParam>(wt);
 }
 
+template<class t_wt>
+void
+test_range_match(typename enable_if<!(has_range_match<t_wt>::value),
+                     t_wt>::type&) {}
+
+template<class t_wt>
+void
+test_range_match(typename enable_if<has_range_match<t_wt>::value,
+                     t_wt>::type& wt)
+{
+    ASSERT_TRUE(load_from_file(wt, temp_file));
+
+    int_vector<8> text;
+    ASSERT_TRUE(load_vector_from_file(text, test_file, 1));
+
+    if (wt.size() == 0)
+        return;
+
+    vector<uint64_t> buf(100);
+    vector<uint64_t> unique_buf(buf.size());
+
+    mt19937_64 rng;
+    uniform_int_distribution<uint64_t> range_distr(0, wt.size()-1);
+    auto dice_range = bind(range_distr, rng);
+
+    uniform_int_distribution<uint64_t> rank_distr(0, buf.size());
+    auto dice_rank = bind(rank_distr, rng);
+
+    for (size_type n=0; n<1000; ++n) {
+        size_type lb = dice_range();
+        size_type rb = std::min(lb+buf.size(), text.size());
+
+        auto buf_end = copy(text.begin()+lb, text.begin()+rb, buf.begin());
+        sort(buf.begin(), buf_end);
+        auto unique_end = unique_copy(buf.begin(), buf_end,
+                                      unique_buf.begin());
+        size_type r = dice_rank() % (unique_end - unique_buf.begin());
+        auto c = unique_buf[r];
+
+        size_t cnt = upper_bound(buf.begin(), buf_end, c) -
+                     lower_bound(buf.begin(), buf_end, c);
+        
+        auto res = wt.range_match(lb, rb, c);
+        ASSERT_EQ(cnt, res.size());
+
+        for (auto point : res) {
+            // check that position is in range
+            ASSERT_TRUE(point >= lb);
+            ASSERT_TRUE(point < rb);
+            // check that in the original data
+            ASSERT_EQ(text[point], c);
+        }
+
+        sort(res.begin(), res.end());
+        ASSERT_EQ(unique(res.begin(), res.end()), res.end());
+    }
+}
+
+//! Test the load method and range_match
+TYPED_TEST(wt_byte_test, range_match)
+{
+    TypeParam wt;
+    test_range_match<TypeParam>(wt);
+}
+
+template<class t_wt>
+void
+test_range_mismatch(typename enable_if<!(has_range_mismatch<t_wt>::value),
+                     t_wt>::type&) {}
+
+template<class t_wt>
+void
+test_range_mismatch(typename enable_if<has_range_mismatch<t_wt>::value,
+                     t_wt>::type& wt)
+{
+    ASSERT_TRUE(load_from_file(wt, temp_file));
+
+    int_vector<8> text;
+    ASSERT_TRUE(load_vector_from_file(text, test_file, 1));
+
+    if (wt.size() == 0)
+        return;
+
+    vector<uint64_t> buf(100);
+    vector<uint64_t> unique_buf(buf.size());
+
+    mt19937_64 rng;
+    uniform_int_distribution<uint64_t> range_distr(0, wt.size()-1);
+    auto dice_range = bind(range_distr, rng);
+
+    uniform_int_distribution<uint64_t> rank_distr(0, buf.size());
+    auto dice_rank = bind(rank_distr, rng);
+
+    for (size_type n=0; n<1000; ++n) {
+        size_type lb = dice_range();
+        size_type rb = std::min(lb+buf.size(), text.size());
+
+        auto buf_end = copy(text.begin()+lb, text.begin()+rb, buf.begin());
+        sort(buf.begin(), buf_end);
+        auto unique_end = unique_copy(buf.begin(), buf_end,
+                                      unique_buf.begin());
+        size_type r = dice_rank() % (unique_end - unique_buf.begin());
+        auto c = unique_buf[r];
+
+        size_t cnt = upper_bound(buf.begin(), buf_end, c) -
+                     lower_bound(buf.begin(), buf_end, c);
+        cnt = rb - lb - cnt;
+        
+        auto res = wt.range_mismatch(lb, rb, c);
+        ASSERT_EQ(cnt, res.size());
+
+        for (auto point : res) {
+            // check that position is in range
+            ASSERT_TRUE(point >= lb);
+            ASSERT_TRUE(point < rb);
+            // check that in the original data
+            ASSERT_NE(text[point], c);
+        }
+
+        sort(res.begin(), res.end());
+        ASSERT_EQ(unique(res.begin(), res.end()), res.end());
+    }
+}
+
+//! Test the load method and range_match
+TYPED_TEST(wt_byte_test, range_mismatch)
+{
+    TypeParam wt;
+    test_range_mismatch<TypeParam>(wt);
+}
+
 TYPED_TEST(wt_byte_test, create_partially_test)
 {
     int_vector_buffer<8> text_buf(test_file, std::ios::in, 1024*1024, 8, true);

@@ -314,6 +314,43 @@ struct has_range_search_2d {
     static constexpr bool value = type::value;
 };
 
+template<typename t_wt>
+struct has_range_match {
+    template<typename T>
+    static constexpr auto check(T*)
+    -> typename
+    std::is_same<
+    decltype(std::declval<T>().range_match(//
+                 std::declval<typename T::size_type>(),
+                 std::declval<typename T::size_type>(),
+                 std::declval<typename T::value_type>()
+             )),
+             std::vector<typename T::size_type>>::type {return std::true_type();}
+
+             template<typename>
+    static constexpr std::false_type check(...) {return std::false_type();}
+    typedef decltype(check<t_wt>(nullptr)) type;
+    static constexpr bool value = type::value;
+};
+
+template<typename t_wt>
+struct has_range_mismatch {
+    template<typename T>
+    static constexpr auto check(T*)
+    -> typename
+    std::is_same<
+    decltype(std::declval<T>().range_mismatch(//
+                 std::declval<typename T::size_type>(),
+                 std::declval<typename T::size_type>(),
+                 std::declval<typename T::value_type>()
+             )),
+             std::vector<typename T::size_type>>::type {return std::true_type();}
+
+             template<typename>
+    static constexpr std::false_type check(...) {return std::false_type();}
+    typedef decltype(check<t_wt>(nullptr)) type;
+    static constexpr bool value = type::value;
+};
 
 //! Returns for a symbol c the previous smaller or equal symbol in the WT.
 /*! \param c the symbol

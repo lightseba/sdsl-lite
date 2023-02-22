@@ -26,6 +26,7 @@
 #include "rank_support.hpp"
 #include "select_support.hpp"
 #include "wt_helper.hpp"
+#include <algorithm>
 #include <vector>
 #include <utility>
 #include <tuple>
@@ -638,6 +639,138 @@ class wt_pc
                 v = m_tree.child(v, p&1);
             }
             return t_ret_type {all, result};
+        }
+
+        //! range_match searches points in the index interval [lb..rb) with values = c.
+        /*! \param lb     Left bound of index interval (inclusive)
+         *  \param rb     Right bound of index interval (exclusive)
+         *  \param c      Value to find
+         *  \return       Vector of points where c occurs
+         */
+        std::vector<size_type>
+        range_match(size_type lb, size_type rb, value_type c) const {
+            assert(0 <= lb && lb <= rb && rb <= size());
+            if (!m_tree.is_valid(m_tree.c_to_leaf(c))) {
+                return {};  // if `c` was not in the text
+            }
+            if (m_sigma == 1) {
+                std::vector<size_type> point_vec(rb - lb);
+                std::iota(point_vec.begin(), point_vec.end(), lb);
+                return point_vec; // if m_sigma == 1 answer is trivial
+            }
+
+            uint64_t p = m_tree.bit_path(c), rev_p = 0;
+            uint32_t path_len = (p>>56);
+            node_type v = m_tree.root();
+            std::vector<size_type> offset(path_len), offset_rank(path_len);
+
+            for (uint32_t l=0; l<path_len && lb < rb; ++l, p >>= 1) {
+                auto v_sp_rank = m_tree.bv_pos_rank(v);
+                auto lb_rank   = m_bv_rank(m_tree.bv_pos(v) + lb) - v_sp_rank; // num 1s under lb
+                auto rb_rank   = m_bv_rank(m_tree.bv_pos(v) + rb) - v_sp_rank; // num 1s under rb
+                offset[l] = m_tree.bv_pos(v);
+                offset_rank[l] = v_sp_rank;
+
+                if (p&1) {
+                    lb = lb_rank;
+                    rb = rb_rank;
+                } else {
+                    lb -= lb_rank;
+                    rb -= rb_rank;
+                }
+                v = m_tree.child(v, p&1); // goto child
+                rev_p = (rev_p << 1) | (p & 1);
+            }
+
+            if (lb == rb) return {};
+
+            std::vector<size_type> point_vec(rb - lb);
+            std::iota(point_vec.begin(), point_vec.end(), lb);
+
+            p = rev_p;
+            
+            for (int32_t l=path_len-1; l>=0; --l, p >>= 1) {
+                if (p&1) {
+                    for (auto& i : point_vec) 
+                        i = m_bv_select1(i + offset_rank[l] + 1) - offset[l];
+                } else {
+                    for (auto& i : point_vec) 
+                        i = m_bv_select0(i + offset[l] - offset_rank[l] + 1) - offset[l];
+                }
+            }
+
+            return point_vec;
+        }
+
+
+        //! range_mismatch searches points in the index interval [lb..rb) with values != c.
+        /*! \param lb     Left bound of index interval (inclusive)
+         *  \param rb     Right bound of index interval (exclusive)
+         *  \param c      Value to skip
+         *  \return       Vector of points where c does not occur
+         */
+        std::vector<size_type>
+        range_mismatch(size_type lb, size_type rb, value_type c) const {
+            assert(0 <= lb && lb <= rb && rb <= size());
+            if (!m_tree.is_valid(m_tree.c_to_leaf(c))) {
+                std::vector<size_type> point_vec(rb - lb);
+                std::iota(point_vec.begin(), point_vec.end(), lb);
+                return point_vec;  // if `c` was not in the text
+            }
+            if (m_sigma == 1) {
+                return {}; // if m_sigma == 1 answer is trivial
+            }
+
+            uint64_t p = m_tree.bit_path(c), rev_p = 0;
+            uint32_t path_len = (p>>56);
+            node_type v = m_tree.root();
+            std::vector<size_type> offset(path_len), offset_rank(path_len), lvl_lb(path_len), lvl_rb(path_len);
+            size_type cnt = 0;
+
+            for (uint32_t l=0; l<path_len; ++l, p >>= 1) {
+                auto v_sp_rank = m_tree.bv_pos_rank(v);
+                auto lb_rank   = m_bv_rank(m_tree.bv_pos(v) + lb) - v_sp_rank; // num 1s under lb
+                auto rb_rank   = m_bv_rank(m_tree.bv_pos(v) + rb) - v_sp_rank; // num 1s under rb
+                offset[l] = m_tree.bv_pos(v);
+                offset_rank[l] = v_sp_rank;
+
+                if (p&1) {
+                    lvl_lb[l] = lb - lb_rank;
+                    lvl_rb[l] = rb - rb_rank;
+                    lb = lb_rank;
+                    rb = rb_rank;
+                } else {
+                    lvl_lb[l] = lb_rank;
+                    lvl_rb[l] = rb_rank;
+                    lb -= lb_rank;
+                    rb -= rb_rank;
+                }
+                
+                cnt += lvl_rb[l] - lvl_lb[l];
+                v = m_tree.child(v, p&1); // goto child
+                rev_p = (rev_p << 1) | (p & 1);
+            }
+            
+            std::vector<size_type> point_vec;
+            point_vec.reserve(cnt);
+
+            p = rev_p;
+            
+            for (int32_t l = path_len-1; l>=0; --l, p >>= 1) {
+                if (p&1) {
+                    for (auto& i : point_vec) 
+                        i = m_bv_select1(i + offset_rank[l] + 1) - offset[l];
+                    for (auto i = lvl_lb[l]; i < lvl_rb[l]; i++)
+                        point_vec.push_back(m_bv_select0(i + offset[l] - offset_rank[l] + 1) - offset[l]);
+                } else {
+                    for (auto& i : point_vec) 
+                        i = m_bv_select0(i + offset[l] - offset_rank[l] + 1) - offset[l];
+                    for (auto i = lvl_lb[l]; i < lvl_rb[l]; i++)
+                        point_vec.push_back(m_bv_select1(i + offset_rank[l] + 1) - offset[l]);
+                }
+            }
+
+            return point_vec;
         }
 
         //! Returns a const_iterator to the first element.
